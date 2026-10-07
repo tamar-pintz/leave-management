@@ -22,7 +22,7 @@
 ## 4. Frontend
 - **טופס הגשת בקשה (validation)**: Reactive Form (`FormGroup`) ב‑`LeaveRequestsComponent` עם `Validators.required` על עובד/סוג/תאריכים, ו‑cross-field validator שבודק `startDate <= endDate`. מכיוון שה‑API מחשב את מספר הימים מהתאריכים (ולא מקבל שדה `days` נפרד), הדרישה "אין מספר ימים שלילי" ממומשת דרך אותו validator — ברגע שתאריך ההתחלה לא מאוחר מתאריך הסיום, הימים המחושבים תמיד ≥ 1. הודעות שגיאה מוצגות לכל שדה בנפרד + הודעת שגיאה/הצלחה מהשרת בעת שליחה.
 - **כפתור האישור**: הוחלף מ‑"POST ואז רענון כל הרשימה" למצב per-row: `approvingIds: Set<number>` מנטרל רק את הכפתור של השורה הרלוונטית ומציג "Approving..." בזמן הקריאה. בהצלחה — מעדכנים רק את השורה הזו מה‑response (ה‑API כבר מחזיר את הבקשה המעודכנת) ומציגים toast חולף (נעלם אוטומטית אחרי 3 שניות, לא נשאר קבוע ולא `alert`). בכישלון (למשל 409 כי הבקשה כבר אושרה, או חריגה ממכסה) — מוצגת הודעת השגיאה מהשרת מתחת לשורה הספציפית.
-- **שיפור הקומפוננטה (service layer, טיפוסים, RxJS)**: ...
+- **שיפור הקומפוננטה (service layer, טיפוסים, RxJS)**: כל קריאות ה‑HTTP הוצאו מ‑`LeaveRequestsComponent` ל‑`LeaveRequestsService` (`getAll`/`getEmployees`/`create`/`approve`, כל אחת מחזירה `Observable` מוקלד). הוסר כל שימוש ב‑`any` — `requests: LeaveRequest[]`, ותגובות שגיאה מוקלדות כ‑`HttpErrorResponse`. הטפסים הריאקטיביים כבר מוקלדים אוטומטית ע"י Angular (strict typed forms), כך ש‑`form.value` מחזיר טיפוסים אמיתיים ולא `any`. לניקוי subscriptions בלי memory leaks השתמשתי ב‑`takeUntilDestroyed(this.destroyRef)` על כל ה‑Observables (גם אם קריאות HttpClient משלימות מעצמן אחרי תגובה אחת, זו עדיין הדרך הנכונה/אידיומטית ב‑Angular 17 להבטיח ניקוי אם הקומפוננטה נהרסת לפני שהתגובה חוזרת).
 
 ## 5. על מה ויתרתי בגלל הזמן
 - ... ומה הייתי עושה עם עוד יום:

@@ -1,6 +1,7 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, DestroyRef, inject, OnDestroy, OnInit } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
-import { HttpClient } from '@angular/common/http';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   AbstractControl,
   FormBuilder,
@@ -10,6 +11,7 @@ import {
   Validators
 } from '@angular/forms';
 import { Employee, LeaveRequest } from '../models/leave-request.model';
+import { LeaveRequestsService } from './leave-requests.service';
 
 // Ensures the start date isn't after the end date, which also guarantees the
 // computed day count (done server-side from these dates) can't be negative.
@@ -20,8 +22,10 @@ function dateRangeValidator(group: AbstractControl): ValidationErrors | null {
   return new Date(start) > new Date(end) ? { dateRange: true } : null;
 }
 
-// NOTE: This component was written quickly for a POC.
-// It talks to the API directly, manages state by hand and uses `any` everywhere.
+function errorMessage(err: HttpErrorResponse, fallback: string): string {
+  return typeof err.error === 'string' ? err.error : fallback;
+}
+
 @Component({
   selector: 'app-leave-requests',
   standalone: true,
@@ -30,7 +34,9 @@ function dateRangeValidator(group: AbstractControl): ValidationErrors | null {
   styleUrls: ['./leave-requests.component.css']
 })
 export class LeaveRequestsComponent implements OnInit, OnDestroy {
-  requests: any[] = [];
+  private readonly destroyRef = inject(DestroyRef);
+
+  requests: LeaveRequest[] = [];
   employees: Employee[] = [];
   loading = false;
 
@@ -46,14 +52,11 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
   toastMessage: string | null = null;
   private toastTimeoutId?: ReturnType<typeof setTimeout>;
 
-  private apiUrl = 'http://localhost:5080/api/leave-requests';
-  private employeesUrl = 'http://localhost:5080/api/employees';
-
-  constructor(private http: HttpClient, private fb: FormBuilder) {
+  constructor(private leaveRequests: LeaveRequestsService, private fb: FormBuilder) {
     this.form = this.fb.group(
       {
-        employeeId: [null, Validators.required],
-        type: [null, Validators.required],
+        employeeId: [null as number | null, Validators.required],
+        type: [null as number | null, Validators.required],
         startDate: ['', Validators.required],
         endDate: ['', Validators.required]
       },
@@ -63,17 +66,25 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.load();
-    this.http.get<Employee[]>(this.employeesUrl).subscribe((data) => {
-      this.employees = data;
-    });
+    this.leaveRequests
+      .getEmployees()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((data) => (this.employees = data));
+  }
+
+  ngOnDestroy(): void {
+    clearTimeout(this.toastTimeoutId);
   }
 
   load(): void {
     this.loading = true;
-    this.http.get<any>(this.apiUrl).subscribe((data) => {
-      this.requests = data;
-      this.loading = false;
-    });
+    this.leaveRequests
+      .getAll()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((data) => {
+        this.requests = data;
+        this.loading = false;
+      });
   }
 
   submit(): void {
@@ -87,13 +98,14 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
 
     const value = this.form.value;
     this.submitting = true;
-    this.http
-      .post(this.apiUrl, {
-        employeeId: value.employeeId,
-        type: value.type,
-        startDate: value.startDate,
-        endDate: value.endDate
+    this.leaveRequests
+      .create({
+        employeeId: value.employeeId!,
+        type: value.type!,
+        startDate: value.startDate!,
+        endDate: value.endDate!
       })
+      .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: () => {
           this.submitting = false;
@@ -101,9 +113,9 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
           this.form.reset();
           this.load();
         },
-        error: (err) => {
+        error: (err: HttpErrorResponse) => {
           this.submitting = false;
-          this.submitError = typeof err?.error === 'string' ? err.error : 'Failed to submit the request.';
+          this.submitError = errorMessage(err, 'Failed to submit the request.');
         }
       });
   }
@@ -112,19 +124,22 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
     this.approveErrors.delete(id);
     this.approvingIds.add(id);
 
-    this.http.post<LeaveRequest>(`${this.apiUrl}/${id}/approve`, {}).subscribe({
-      next: (updated) => {
-        this.approvingIds.delete(id);
-        this.showToast('Request approved successfully.');
-        // Patch just this row in place instead of reloading the whole list.
-        const index = this.requests.findIndex((r) => r.id === id);
-        if (index > -1) this.requests[index] = updated;
-      },
-      error: (err) => {
-        this.approvingIds.delete(id);
-        this.approveErrors.set(id, typeof err?.error === 'string' ? err.error : 'Failed to approve the request.');
-      }
-    });
+    this.leaveRequests
+      .approve(id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (updated) => {
+          this.approvingIds.delete(id);
+          this.showToast('Request approved successfully.');
+          // Patch just this row in place instead of reloading the whole list.
+          const index = this.requests.findIndex((r) => r.id === id);
+          if (index > -1) this.requests[index] = updated;
+        },
+        error: (err: HttpErrorResponse) => {
+          this.approvingIds.delete(id);
+          this.approveErrors.set(id, errorMessage(err, 'Failed to approve the request.'));
+        }
+      });
   }
 
   isApproving(id: number): boolean {
@@ -141,10 +156,6 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
     this.toastTimeoutId = setTimeout(() => (this.toastMessage = null), 3000);
   }
 
-  ngOnDestroy(): void {
-    clearTimeout(this.toastTimeoutId);
-  }
-
   typeLabel(type: number): string {
     if (type == 0) return 'Vacation';
     if (type == 1) return 'Sick';
@@ -157,4 +168,5 @@ export class LeaveRequestsComponent implements OnInit, OnDestroy {
     return 'Rejected';
   }
 }
+
 
