@@ -8,16 +8,14 @@
 - ...
 
 ## 2. הבאג ביתרת החופשה
-- מה היה הבאג, איפה, ואיך תיקנתי: ב‑`LeaveRequestsController.Create` (`backend/src/LeaveManagement.Api/Controllers/LeaveRequestsController.cs`) חושב `used` — סך ימי החופשה המאושרים שהעובד כבר ניצל — אבל המשתנה מעולם לא נבדק. התנאי היה `days > employee.AnnualQuota`, כלומר רק הבקשה הבודדת הנוכחית נבדקת מול כל המכסה השנתית, בלי להתחשב בניצול קודם. תיקנתי ל‑`used + days > employee.AnnualQuota`.
-- הטסט שמוכיח את התיקון: `Create_ExceedingRemainingQuota_FailsEvenThoughSingleRequestFitsAnnualQuota` ב‑`backend/tests/LeaveManagement.Tests/LeaveRequestsTests.cs` — עובד עם מכסה של 10 ימים ו‑8 ימים מאושרים כבר, מנסה להגיש בקשה נוספת של 3 ימים (פחות מ‑10 בעצמה, אך חורגת מהיתרה שנותרה) ומוודא שחוזר `BadRequest`.
+- הבאג: ב‑`LeaveRequestsController.Create` חושב `used` (ימי חופשה מאושרים שכבר נוצלו) אבל הוא לא נבדק בפועל — התנאי היה רק `days > AnnualQuota`, כך שבקשה בודדת נבדקה מול כל המכסה בלי להתחשב בניצול קודם. תיקון: `used + days > AnnualQuota`.
+- הטסט: `Create_ExceedingRemainingQuota_FailsEvenThoughSingleRequestFitsAnnualQuota` — מכסה 10, כבר 8 ימים מאושרים, בקשה נוספת של 3 ימים נדחית (`BadRequest`).
 
 ## 3. אישור בקשה (approve) ו‑concurrency
-- איך טיפלתי במצבים לא חוקיים (כבר אושר / לא קיים): `POST /api/leave-requests/{id}/approve` ב‑`LeaveRequestsController.Approve`. בקשה לא קיימת → `404 NotFound`. בקשה שכבר `Approved`/`Rejected` (לא `Pending`) → `409 Conflict` עם הודעה שמציינת את הסטטוס הנוכחי. אם האישור היה גורם לחריגה מהמכסה השנתית (לאחר בדיקה מחדש של הימים המאושרים) → גם `409 Conflict`, והבקשה נשארת `Pending` (לא נדחית אוטומטית — מישהו צריך להחליט מה לעשות איתה).
-- מה לגבי אישור של שתי בקשות במקביל: הבעיה: אם לעובד יש שתי בקשות `Pending` ושתיהן ביחד חורגות מהמכסה (אך כל אחת לבד לא), שני thread/requests יכולים לקרוא את אותו ה‑"used" (סכום הימים המאושרים) *לפני* שאף אחד מהם הספיק לעדכן, ואז שניהם "רואים" שיש מספיק יתרה ושניהם מאשרים — התוצאה: חריגה מהמכסה.
-  - עטפתי את כל הלוגיקה (בדיקת סטטוס, חישוב `used`, עדכון הסטטוס) בטרנזקציית DB אחת (`_db.Database.BeginTransaction()`).
-  - **ב‑PostgreSQL**: לפני בדיקת ה‑quota, אני נועל את שורת ה‑Employee עם `SELECT ... FOR UPDATE` (דרך `FromSqlInterpolated`). זה אומר שאם שתי בקשות approve לאותו עובד רצות "במקביל", הטרנזקציה השנייה תיחסם (תמתין) על הנעילה עד שהראשונה תסיים (commit/rollback) — ואז היא תראה את הנתונים המעודכנים ותדחה את עצמה אם המכסה כבר נוצלה. זה פותר את התרחיש באופן אמיתי.
-  - **ב‑SQLite** (המצב שעבדתי בו בפועל, ללא Docker): אין תמיכה ב‑row-level locking או ב‑`FOR UPDATE`. SQLite נועל את כל קובץ ה‑DB לכתיבה לכל טרנזקציה (single-writer), כך שבפועל שתי טרנזקציות כתיבה גם הן יתבצעו בזה אחר זה ולא ממש "במקביל" — אבל זו תוצאה של המגבלה הגסה של SQLite (נעילת כל הקובץ), לא פתרון מכוון שלי. ברמת העומס הקטנה של האפליקציה הזו זה "עובד", אבל זה לא היה הפתרון שהייתי בוחר בסביבת production עם Postgres.
-  - מה הייתי עושה עם עוד זמן: להוסיף גם concurrency token (`xmin`/`RowVersion`) על `LeaveRequest` כהגנה כפולה (optimistic concurrency) שתזרוק `DbUpdateConcurrencyException` אם מישהו עדכן את הרשומה בין הקריאה לשמירה, במקום להסתמך רק על נעילת ה‑Employee.
+- `POST /api/leave-requests/{id}/approve`: בקשה לא קיימת → `404`. כבר `Approved`/`Rejected` → `409`. אישור שהיה חורג מהמכסה (בדיקה מחדש של הימים המאושרים) → `409` והבקשה נשארת `Pending`.
+- ה‑concurrency risk: שתי בקשות `Pending` לאותו עובד שביחד חורגות מהמכסה (אך כל אחת לבד לא) — אם שתיהן מאושרות "במקביל", שתיהן עלולות לקרוא את אותו "used" לפני שמישהי עדכנה, ושתיהן יעברו בטעות.
+- הפתרון: כל הלוגיקה (בדיקת סטטוס + חישוב used + עדכון) עטופה בטרנזקציה אחת. ב‑PostgreSQL נועלים את שורת ה‑Employee עם `SELECT ... FOR UPDATE`, כך שאישור שני לאותו עובד ימתין לראשון ויראה נתונים מעודכנים. ב‑SQLite (המצב שעבדתי בו, ללא Docker) אין row locking אמיתי — SQLite נועל את כל קובץ ה‑DB לכתיבה (single-writer), מה שמסתיר את הבעיה בפועל אך לא פותר אותה באופן מכוון.
+- עם עוד זמן: להוסיף גם concurrency token (`RowVersion`/`xmin`) על `LeaveRequest` כהגנה כפולה (optimistic concurrency).
 
 ## 4. על מה ויתרתי בגלל הזמן
 - ... ומה הייתי עושה עם עוד יום:
@@ -34,6 +32,7 @@
 - אם מצאתם בעיית אבטחה: מה מצאתם, איפה (קובץ + שורה), למה זו בעיה, ואיך תיקנתם:
 
 ## 6. הוראות הרצה
-- **Docker לא היה מותקן על המכונה בזמן העבודה.** במקום להמתין להתקנה/הורדה, הרצתי את הפרויקט במצב הנוע ללא Docker: backend מול SQLite (`Database__Provider=Sqlite`) ו‑frontend עם `npm start` רגיל. בכוונה לעבור בהמשך ל‑Docker (PostgreSQL) כדי לבדוק את משימת ה‑concurrency מול DB אמיתי עם נעילות/טרנזקציות אמיתיות, כפי שה‑README ממליץ.
+- Docker לא היה מותקן על המכונה. עבדתי בלי Docker: backend מול SQLite (`Database__Provider=Sqlite`), frontend עם `npm start` רגיל. כוונה לעבור בהמשך ל‑Docker/Postgres לבדיקה אמיתית של משימת ה‑concurrency.
 
 </div>
+
