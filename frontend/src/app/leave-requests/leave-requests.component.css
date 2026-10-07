@@ -9,3 +9,32 @@ button {
 button:hover {
   background: #186faf;
 }
+
+button:disabled {
+  background: #9fc3dc;
+  cursor: not-allowed;
+}
+
+.new-request {
+  max-width: 320px;
+  margin-bottom: 24px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 10px;
+}
+
+.error {
+  color: #c0392b;
+  font-size: 0.85em;
+  margin-top: 2px;
+}
+
+.success {
+  color: #1e8449;
+  font-size: 0.85em;
+  margin-top: 6px;
+}
+

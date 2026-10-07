@@ -9,6 +9,7 @@
 - הוספתי `LeaveRequestDto`/`EmployeeDto` כצורת החזרה במקום לפרמט ישירות את ה‑entities של EF (`LeaveRequest`/`Employee`) — זה מנתק את חוזה ה‑API מהמודל של ה‑DB, ומייתר את הצורך ב‑`ReferenceHandler.IgnoreCycles` בגלל ה‑navigation המעגלי בין Employee ל‑LeaveRequest.
 - לשגיאות משתמשים ב‑`ServiceResult<T>` עם `ErrorType` (NotFound / Conflict / Invalid) — ה‑Controller ממפה את זה לקודי HTTP (404/409/400) בלי לדעת שום דבר על הלוגיקה העסקית עצמה. פשוט מספיק בלי enum/exception hierarchy מורכב.
 - דרך אגב תיקנתי גם SQL injection ב‑`Search` (ראו סעיף 5 — אבטחה) כי נגעתי באותו קוד בכל מקרה.
+- **Frontend — טופס הגשת בקשה**: הוספתי Reactive Form (`FormGroup`) ב‑`LeaveRequestsComponent` עם `Validators.required` על עובד/סוג/תאריכים, ו‑cross-field validator שבודק `startDate <= endDate`. מכיוון שה‑API מחשב את מספר הימים מהתאריכים (ולא מקבל שדה `days` נפרד), הדרישה "אין מספר ימים שלילי" ממומשת דרך אותו validator — ברגע שתאריך ההתחלה לא מאוחר מתאריך הסיום, הימים המחושבים תמיד ≥ 1. הודעות שגיאה מוצגות לכל שדה בנפרד + הודעת שגיאה/הצלחה מהשרת בעת שליחה.
 
 ## 2. הבאג ביתרת החופשה
 - הבאג: ב‑`LeaveRequestsController.Create` חושב `used` (ימי חופשה מאושרים שכבר נוצלו) אבל הוא לא נבדק בפועל — התנאי היה רק `days > AnnualQuota`, כך שבקשה בודדת נבדקה מול כל המכסה בלי להתחשב בניצול קודם. תיקון: `used + days > AnnualQuota`.

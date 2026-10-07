@@ -1,8 +1,64 @@
 <h2>Leave Requests</h2>
 
-<!-- TODO (candidate): add the "new request" form here, with validation. -->
+<section class="new-request">
+  <h3>New Leave Request</h3>
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    <div class="field">
+      <label for="employeeId">Employee</label>
+      <select id="employeeId" formControlName="employeeId">
+        <option [ngValue]="null" disabled>Select employee</option>
+        <option *ngFor="let e of employees" [ngValue]="e.id">{{ e.name }}</option>
+      </select>
+      <div class="error" *ngIf="form.get('employeeId')?.invalid && form.get('employeeId')?.touched">
+        Employee is required.
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="type">Leave type</label>
+      <select id="type" formControlName="type">
+        <option [ngValue]="null" disabled>Select type</option>
+        <option [ngValue]="0">Vacation</option>
+        <option [ngValue]="1">Sick</option>
+        <option [ngValue]="2">Unpaid</option>
+      </select>
+      <div class="error" *ngIf="form.get('type')?.invalid && form.get('type')?.touched">
+        Leave type is required.
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="startDate">Start date</label>
+      <input id="startDate" type="date" formControlName="startDate" />
+      <div class="error" *ngIf="form.get('startDate')?.invalid && form.get('startDate')?.touched">
+        Start date is required.
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="endDate">End date</label>
+      <input id="endDate" type="date" formControlName="endDate" />
+      <div class="error" *ngIf="form.get('endDate')?.invalid && form.get('endDate')?.touched">
+        End date is required.
+      </div>
+    </div>
+
+    <div
+      class="error"
+      *ngIf="form.errors?.['dateRange'] && (form.get('startDate')?.touched || form.get('endDate')?.touched)"
+    >
+      Start date must not be later than the end date (no negative number of days).
+    </div>
+
+    <button type="submit" [disabled]="submitting">{{ submitting ? 'Submitting...' : 'Submit request' }}</button>
+
+    <div class="success" *ngIf="submitSuccess">Request submitted successfully.</div>
+    <div class="error" *ngIf="submitError">{{ submitError }}</div>
+  </form>
+</section>
 
 <div *ngIf="loading">Loading...</div>
+
 
 <table *ngIf="!loading">
   <thead>
