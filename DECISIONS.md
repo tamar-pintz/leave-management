@@ -1,47 +1,49 @@
-<div dir="rtl">
-
 # DECISIONS
 
-> מלאו את הקובץ הזה. הוא חלק מההערכה — קצר וברור עדיף על ארוך.
+> Written in English for convenience — native language of the codebase, no RTL/LTR mixing with code.
 
-## 1. החלטות ארכיטקטוניות (Backend)
-- פיצלתי את `LeaveRequestsController` לשתי שכבות: Controller (דק, רק ממפה HTTP ↔ קריאות לשירות) ו‑`LeaveRequestService` (כל הלוגיקה העסקית: בדיקת מכסה, טרנזקציה ל‑approve, validation). ה‑`DbContext` עצמו משמש כ‑repository/unit-of-work — **לא** הוספתי שכבת Repository נפרדת מעליו, כי זה over-engineering: EF Core כבר נותן את ההפשטה הזו, ושכבה נוספת רק הייתה מוסיפה בויילרפלייט בלי ערך אמיתי בפרויקט בגודל הזה.
-- הוספתי `LeaveRequestDto`/`EmployeeDto` כצורת החזרה במקום לפרמט ישירות את ה‑entities של EF (`LeaveRequest`/`Employee`) — זה מנתק את חוזה ה‑API מהמודל של ה‑DB, ומייתר את הצורך ב‑`ReferenceHandler.IgnoreCycles` בגלל ה‑navigation המעגלי בין Employee ל‑LeaveRequest.
-- לשגיאות משתמשים ב‑`ServiceResult<T>` עם `ErrorType` (NotFound / Conflict / Invalid) — ה‑Controller ממפה את זה לקודי HTTP (404/409/400) בלי לדעת שום דבר על הלוגיקה העסקית עצמה. פשוט מספיק בלי enum/exception hierarchy מורכב.
+## 1. Architectural Decisions
 
-## 2. הבאג ביתרת החופשה
-- הבאג: ב‑`LeaveRequestsController.Create` חושב `used` (ימי חופשה מאושרים שכבר נוצלו) אבל הוא לא נבדק בפועל — התנאי היה רק `days > AnnualQuota`, כך שבקשה בודדת נבדקה מול כל המכסה בלי להתחשב בניצול קודם. תיקון: `used + days > AnnualQuota`.
-- הטסט: `Create_ExceedingRemainingQuota_FailsEvenThoughSingleRequestFitsAnnualQuota` — מכסה 10, כבר 8 ימים מאושרים, בקשה נוספת של 3 ימים נדחית (`BadRequest`).
+### Backend
+- `LeaveRequestsController` split into a thin Controller (HTTP ↔ service) and `LeaveRequestService` (quota checks, approve transaction, validation). No Repository layer — `DbContext` already is one, and more layering would just add boilerplate.
+- Responses use `LeaveRequestDto`/`EmployeeDto` instead of EF entities — decouples the API from the DB model and avoids the `Employee`↔`LeaveRequest` circular-navigation issue.
+- Errors use `ServiceResult<T>` with `ErrorType` (`NotFound`/`Conflict`/`Invalid`), mapped by the controller to 404/409/400 — no exception hierarchy needed.
 
-## 3. אישור בקשה (approve) ו‑concurrency
-- `POST /api/leave-requests/{id}/approve`: בקשה לא קיימת → `404`. כבר `Approved`/`Rejected` → `409`. אישור שהיה חורג מהמכסה (בדיקה מחדש של הימים המאושרים) → `409` והבקשה נשארת `Pending`.
-- ה‑concurrency risk: שתי בקשות `Pending` לאותו עובד שביחד חורגות מהמכסה (אך כל אחת לבד לא) — אם שתיהן מאושרות "במקביל", שתיהן עלולות לקרוא את אותו "used" לפני שמישהי עדכנה, ושתיהן יעברו בטעות.
-- הפתרון: כל הלוגיקה (בדיקת סטטוס + חישוב used + עדכון) עטופה בטרנזקציה אחת. ב‑PostgreSQL נועלים את שורת ה‑Employee עם `SELECT ... FOR UPDATE`, כך שאישור שני לאותו עובד ימתין לראשון ויראה נתונים מעודכנים. ב‑SQLite (המצב שעבדתי בו, ללא Docker) אין row locking אמיתי — SQLite נועל את כל קובץ ה‑DB לכתיבה (single-writer), מה שמסתיר את הבעיה בפועל אך לא פותר אותה באופן מכוון.
-- עם עוד זמן: להוסיף גם concurrency token (`RowVersion`/`xmin`) על `LeaveRequest` כהגנה כפולה (optimistic concurrency).
+### Frontend
+- **Form**: Reactive Form, `Validators.required` on employee/type/dates + a cross-field `startDate <= endDate` check (also guarantees a non-negative day count, since days are server-computed). Per-field errors, submit feedback.
+- **Approve button**: per-row `approvingIds` state disables only that row and shows "Approving...". Success patches just that row and shows an auto-dismissing toast (no `alert`); failure (e.g. 409 already-approved/quota) shows the server message under that row.
+- **Cleanup**: HTTP calls moved to `LeaveRequestsService` (typed `Observable`s), no more `any`, subscriptions use `takeUntilDestroyed`.
 
-## 4. Frontend
-- **טופס הגשת בקשה (validation)**: Reactive Form (`FormGroup`) ב‑`LeaveRequestsComponent` עם `Validators.required` על עובד/סוג/תאריכים, ו‑cross-field validator שבודק `startDate <= endDate`. מכיוון שה‑API מחשב את מספר הימים מהתאריכים (ולא מקבל שדה `days` נפרד), הדרישה "אין מספר ימים שלילי" ממומשת דרך אותו validator — ברגע שתאריך ההתחלה לא מאוחר מתאריך הסיום, הימים המחושבים תמיד ≥ 1. הודעות שגיאה מוצגות לכל שדה בנפרד + הודעת שגיאה/הצלחה מהשרת בעת שליחה.
-- **כפתור האישור**: הוחלף מ‑"POST ואז רענון כל הרשימה" למצב per-row: `approvingIds: Set<number>` מנטרל רק את הכפתור של השורה הרלוונטית ומציג "Approving..." בזמן הקריאה. בהצלחה — מעדכנים רק את השורה הזו מה‑response (ה‑API כבר מחזיר את הבקשה המעודכנת) ומציגים toast חולף (נעלם אוטומטית אחרי 3 שניות, לא נשאר קבוע ולא `alert`). בכישלון (למשל 409 כי הבקשה כבר אושרה, או חריגה ממכסה) — מוצגת הודעת השגיאה מהשרת מתחת לשורה הספציפית.
-- **שיפור הקומפוננטה (service layer, טיפוסים, RxJS)**: כל קריאות ה‑HTTP הוצאו מ‑`LeaveRequestsComponent` ל‑`LeaveRequestsService` (`getAll`/`getEmployees`/`create`/`approve`, כל אחת מחזירה `Observable` מוקלד). הוסר כל שימוש ב‑`any` — `requests: LeaveRequest[]`, ותגובות שגיאה מוקלדות כ‑`HttpErrorResponse`. הטפסים הריאקטיביים כבר מוקלדים אוטומטית ע"י Angular (strict typed forms), כך ש‑`form.value` מחזיר טיפוסים אמיתיים ולא `any`. לניקוי subscriptions בלי memory leaks השתמשתי ב‑`takeUntilDestroyed(this.destroyRef)` על כל ה‑Observables (גם אם קריאות HttpClient משלימות מעצמן אחרי תגובה אחת, זו עדיין הדרך הנכונה/אידיומטית ב‑Angular 17 להבטיח ניקוי אם הקומפוננטה נהרסת לפני שהתגובה חוזרת).
+## 2. Leave Balance Bug
+- `Create` computed `used` (approved days) but never checked it — condition was only `days > AnnualQuota`, ignoring prior usage. Fixed to `used + days > AnnualQuota`.
+- Test: `Create_ExceedingRemainingQuota_FailsEvenThoughSingleRequestFitsAnnualQuota` (quota 10, 8 approved, +3 days rejected).
 
-## 5. על מה ויתרתי בגלל הזמן
-- ... ומה הייתי עושה עם עוד יום:
+## 3. Approve Request & Concurrency
+- `POST /api/leave-requests/{id}/approve`: not found → `404`; already `Approved`/`Rejected` → `409`; would exceed quota → `409`, stays `Pending`.
+- Risk: two `Pending` requests that together exceed quota could both read a stale `used` and both pass if approved concurrently.
+- Fix: status check + `used` calc + update in one transaction; PostgreSQL locks the Employee row (`SELECT ... FOR UPDATE`) to serialize this. SQLite (used here) has no real row locking — its whole-file write lock hides the issue rather than solving it.
+- More time: add a `RowVersion`/`xmin` token as a second line of defense.
 
-## 6. שימוש ב‑AI
-### איפה AI עזר (כולל prompts)
-1. prompt: "..." → מה קיבלתי ומה עשיתי איתו:
-2. ...
+## 4. What I Gave Up Due to Time
+- All required tasks were implemented and verified end-to-end in the running UI before time ran out for extra polish.
+- Didn't verify the concurrency fix on a live PostgreSQL instance — Docker was blocked by a company policy (section 6); the Postgres path is coded/reasoned, not run end-to-end. Would otherwise try a workaround (personal Docker Hub org, Podman) or a private laptop.
+- No extra manual/unit testing beyond what's required — no Angular component/service tests, no further backend edge cases.
 
-### איפה דחיתי/תיקנתי הצעה של AI
-- מה AI הציע, למה זה היה שגוי, ומה עשיתי במקום:
-- **כפתור האישור (משימה 5)**: ה‑AI מימש loading state ו‑error handling לכפתור ה‑approve, אבל פספס את דרישת ה‑"משוב הצלחה" מהפרומפט המקורי — לא הייתה שום אינדיקציה למשתמש כשהאישור הצליח (השורה פשוט התעדכנה בשקט). **אני עצרתי את ה‑AI לפני ה‑commit**, הצבעתי על החוסר, והעתקתי שוב את דרישת המשימה המלאה כדי לוודא שתיקון מפורש יתווסף. לקח: גם כש‑AI עונה על רוב הדרישות בפרומפט מורכב (3 תת‑דרישות: loading/error/success), כדאי לבדוק שכל סעיף אכן מומש בפועל ולא רק חלקם לפני שמאשרים commit.
+## 5. AI Usage
 
-### אבטחה
-- **SQL Injection** (נמצא ותוקן): `LeaveRequestsController.Search` (לפני הריפקטור של סעיף 1) בנה שאילתת SQL על ידי שרשור מחרוזת ישירות עם קלט המשתמש (`"...LIKE '%" + name + "%'"`), ללא פרמטריזציה — תוקף יכל להזריק SQL דרך פרמטר ה‑query `name`. תוקן ב‑`LeaveRequestService.Search` עם `EF.Functions.Like` שמפרמט את הערך אוטומטית.
+### Where AI helped (with prompts)
+AI helped with essentially everything, step by step inside the IDE — these are classic examples:
+1. *"There's a bug in the leave balance check... Find it, fix it, add a test."* → found the unchecked `used` variable, fixed it, added a regression test in one pass.
+2. *"Add `POST /api/leave-requests/{id}/approve` ... think about two approvals racing ... use transactions/locking if on Postgres."* → correct status codes, a transaction, `SELECT ... FOR UPDATE` for Postgres, documented SQLite fallback.
+3. Git workflow: organized and pushed one focused commit per task with descriptive messages, done alongside the implementation.
 
-## 7. הוראות הרצה
-- Docker לא היה מותקן על המכונה. עבדתי בלי Docker: backend מול SQLite (`Database__Provider=Sqlite`), frontend עם `npm start` רגיל. כוונה לעבור בהמשך ל‑Docker/Postgres לבדיקה אמיתית של משימת ה‑concurrency.
+### Where I rejected/corrected an AI suggestion
+- Approve button: AI handled loading/error but missed "success feedback" from the prompt. Caught before commit and fixed.
 
-</div>
+### Security
+- **SQL Injection** (found & fixed): `Search` built SQL via string concatenation (`LIKE '%" + name + "%'"`), exploitable via the `name` parameter. Fixed with `EF.Functions.Like`, which parameterizes automatically.
 
-
+## 6. How to Run
+- Docker wasn't installed initially, so I used SQLite (`Database__Provider=Sqlite`) for the backend and plain `npm start` for the frontend.
+- Later installed Docker Desktop and attempted migrating to PostgreSQL via `docker compose up`, but it enforces org-restricted sign-in (`verint...`) and signed me out — *"account is not a member of the [verint...] organization(s)."* The laptop is fine for personal use, but this policy ties Docker Desktop to an org account a personal Docker Hub account can't satisfy.
+- Stayed on SQLite for the submission; the Postgres locking path (section 3) is implemented but verified only by code review and SQLite-equivalent tests, not a live container.
