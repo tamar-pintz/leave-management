@@ -38,3 +38,15 @@ button:disabled {
   margin-top: 6px;
 }
 
+.toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: #1e8449;
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+

@@ -1,5 +1,7 @@
 <h2>Leave Requests</h2>
 
+<div class="toast" *ngIf="toastMessage">{{ toastMessage }}</div>
+
 <section class="new-request">
   <h3>New Leave Request</h3>
   <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
@@ -83,7 +85,10 @@
       <td>{{ r.days }}</td>
       <td>{{ statusLabel(r.status) }}</td>
       <td>
-        <button *ngIf="r.status == 0" (click)="approve(r.id)">Approve</button>
+        <button *ngIf="r.status == 0" (click)="approve(r.id)" [disabled]="isApproving(r.id)">
+          {{ isApproving(r.id) ? 'Approving...' : 'Approve' }}
+        </button>
+        <div class="error" *ngIf="approveError(r.id) as error">{{ error }}</div>
       </td>
     </tr>
   </tbody>

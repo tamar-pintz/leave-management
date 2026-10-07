@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import {
@@ -9,7 +9,7 @@ import {
   ValidationErrors,
   Validators
 } from '@angular/forms';
-import { Employee } from '../models/leave-request.model';
+import { Employee, LeaveRequest } from '../models/leave-request.model';
 
 // Ensures the start date isn't after the end date, which also guarantees the
 // computed day count (done server-side from these dates) can't be negative.
@@ -29,7 +29,7 @@ function dateRangeValidator(group: AbstractControl): ValidationErrors | null {
   templateUrl: './leave-requests.component.html',
   styleUrls: ['./leave-requests.component.css']
 })
-export class LeaveRequestsComponent implements OnInit {
+export class LeaveRequestsComponent implements OnInit, OnDestroy {
   requests: any[] = [];
   employees: Employee[] = [];
   loading = false;
@@ -38,6 +38,13 @@ export class LeaveRequestsComponent implements OnInit {
   submitting = false;
   submitError: string | null = null;
   submitSuccess = false;
+
+  approvingIds = new Set<number>();
+  approveErrors = new Map<number, string>();
+
+  // Transient toast, auto-dismissed — not a blocking generic alert().
+  toastMessage: string | null = null;
+  private toastTimeoutId?: ReturnType<typeof setTimeout>;
 
   private apiUrl = 'http://localhost:5080/api/leave-requests';
   private employeesUrl = 'http://localhost:5080/api/employees';
@@ -101,13 +108,41 @@ export class LeaveRequestsComponent implements OnInit {
       });
   }
 
-  // Wired up by the candidate as part of the assignment.
   approve(id: number): void {
-    // TODO (candidate): call POST /api/leave-requests/{id}/approve
-    // and handle loading / error / success without a generic alert.
-    this.http.post<any>(this.apiUrl + '/' + id + '/approve', {}).subscribe(() => {
-      this.load();
+    this.approveErrors.delete(id);
+    this.approvingIds.add(id);
+
+    this.http.post<LeaveRequest>(`${this.apiUrl}/${id}/approve`, {}).subscribe({
+      next: (updated) => {
+        this.approvingIds.delete(id);
+        this.showToast('Request approved successfully.');
+        // Patch just this row in place instead of reloading the whole list.
+        const index = this.requests.findIndex((r) => r.id === id);
+        if (index > -1) this.requests[index] = updated;
+      },
+      error: (err) => {
+        this.approvingIds.delete(id);
+        this.approveErrors.set(id, typeof err?.error === 'string' ? err.error : 'Failed to approve the request.');
+      }
     });
+  }
+
+  isApproving(id: number): boolean {
+    return this.approvingIds.has(id);
+  }
+
+  approveError(id: number): string | undefined {
+    return this.approveErrors.get(id);
+  }
+
+  private showToast(message: string): void {
+    this.toastMessage = message;
+    clearTimeout(this.toastTimeoutId);
+    this.toastTimeoutId = setTimeout(() => (this.toastMessage = null), 3000);
+  }
+
+  ngOnDestroy(): void {
+    clearTimeout(this.toastTimeoutId);
   }
 
   typeLabel(type: number): string {
