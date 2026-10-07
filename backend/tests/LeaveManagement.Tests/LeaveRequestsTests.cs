@@ -1,5 +1,6 @@
 using LeaveManagement.Api.Controllers;
 using LeaveManagement.Api.Models;
+using LeaveManagement.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 using Xunit;
 
@@ -23,7 +24,7 @@ public class LeaveRequestsTests : IClassFixture<TestDatabase>
         db.Employees.Add(emp);
         db.SaveChanges();
 
-        var controller = new LeaveRequestsController(db);
+        var controller = new LeaveRequestsController(new LeaveRequestService(db));
 
         // Act: request 3 days, well within the quota.
         var result = controller.Create(new CreateLeaveRequestDto
@@ -60,7 +61,7 @@ public class LeaveRequestsTests : IClassFixture<TestDatabase>
         });
         db.SaveChanges();
 
-        var controller = new LeaveRequestsController(db);
+        var controller = new LeaveRequestsController(new LeaveRequestService(db));
 
         // Act: request 3 more days — fits the annual quota alone (10), but not the remaining balance (2).
         var result = controller.Create(new CreateLeaveRequestDto
@@ -97,7 +98,7 @@ public class LeaveRequestsTests : IClassFixture<TestDatabase>
         db.LeaveRequests.Add(pending);
         db.SaveChanges();
 
-        var controller = new LeaveRequestsController(db);
+        var controller = new LeaveRequestsController(new LeaveRequestService(db));
 
         // Act
         var result = controller.Approve(pending.Id);
@@ -112,7 +113,7 @@ public class LeaveRequestsTests : IClassFixture<TestDatabase>
     {
         // Arrange
         using var db = _database.NewDb();
-        var controller = new LeaveRequestsController(db);
+        var controller = new LeaveRequestsController(new LeaveRequestService(db));
 
         // Act
         var result = controller.Approve(id: 999);
@@ -142,7 +143,7 @@ public class LeaveRequestsTests : IClassFixture<TestDatabase>
         db.LeaveRequests.Add(approved);
         db.SaveChanges();
 
-        var controller = new LeaveRequestsController(db);
+        var controller = new LeaveRequestsController(new LeaveRequestService(db));
 
         // Act
         var result = controller.Approve(approved.Id);
@@ -184,7 +185,7 @@ public class LeaveRequestsTests : IClassFixture<TestDatabase>
         db.LeaveRequests.Add(pending);
         db.SaveChanges();
 
-        var controller = new LeaveRequestsController(db);
+        var controller = new LeaveRequestsController(new LeaveRequestService(db));
 
         // Act
         var result = controller.Approve(pending.Id);

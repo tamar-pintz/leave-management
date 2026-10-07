@@ -5,7 +5,10 @@
 > מלאו את הקובץ הזה. הוא חלק מההערכה — קצר וברור עדיף על ארוך.
 
 ## 1. החלטות ארכיטקטוניות
-- ...
+- פיצלתי את `LeaveRequestsController` לשתי שכבות: Controller (דק, רק ממפה HTTP ↔ קריאות לשירות) ו‑`LeaveRequestService` (כל הלוגיקה העסקית: בדיקת מכסה, טרנזקציה ל‑approve, validation). ה‑`DbContext` עצמו משמש כ‑repository/unit-of-work — **לא** הוספתי שכבת Repository נפרדת מעליו, כי זה over-engineering: EF Core כבר נותן את ההפשטה הזו, ושכבה נוספת רק הייתה מוסיפה בויילרפלייט בלי ערך אמיתי בפרויקט בגודל הזה.
+- הוספתי `LeaveRequestDto`/`EmployeeDto` כצורת החזרה במקום לפרמט ישירות את ה‑entities של EF (`LeaveRequest`/`Employee`) — זה מנתק את חוזה ה‑API מהמודל של ה‑DB, ומייתר את הצורך ב‑`ReferenceHandler.IgnoreCycles` בגלל ה‑navigation המעגלי בין Employee ל‑LeaveRequest.
+- לשגיאות משתמשים ב‑`ServiceResult<T>` עם `ErrorType` (NotFound / Conflict / Invalid) — ה‑Controller ממפה את זה לקודי HTTP (404/409/400) בלי לדעת שום דבר על הלוגיקה העסקית עצמה. פשוט מספיק בלי enum/exception hierarchy מורכב.
+- דרך אגב תיקנתי גם SQL injection ב‑`Search` (ראו סעיף 5 — אבטחה) כי נגעתי באותו קוד בכל מקרה.
 
 ## 2. הבאג ביתרת החופשה
 - הבאג: ב‑`LeaveRequestsController.Create` חושב `used` (ימי חופשה מאושרים שכבר נוצלו) אבל הוא לא נבדק בפועל — התנאי היה רק `days > AnnualQuota`, כך שבקשה בודדת נבדקה מול כל המכסה בלי להתחשב בניצול קודם. תיקון: `used + days > AnnualQuota`.
@@ -30,6 +33,7 @@
 
 ### אבטחה
 - אם מצאתם בעיית אבטחה: מה מצאתם, איפה (קובץ + שורה), למה זו בעיה, ואיך תיקנתם:
+- **SQL Injection** (נמצא ותוקן): `LeaveRequestsController.Search` (לפני הריפקטור של סעיף 1) בנה שאילתת SQL על ידי שרשור מחרוזת ישירות עם קלט המשתמש (`"...LIKE '%" + name + "%'"`), ללא פרמטריזציה — תוקף יכל להזריק SQL דרך פרמטר ה‑query `name`. תוקן ב‑`LeaveRequestService.Search` עם `EF.Functions.Like` שמפרמט את הערך אוטומטית.
 
 ## 6. הוראות הרצה
 - Docker לא היה מותקן על המכונה. עבדתי בלי Docker: backend מול SQLite (`Database__Provider=Sqlite`), frontend עם `npm start` רגיל. כוונה לעבור בהמשך ל‑Docker/Postgres לבדיקה אמיתית של משימת ה‑concurrency.
