@@ -83,4 +83,53 @@ public class LeaveRequestsController : ControllerBase
 
         return Ok(request);
     }
+
+    // POST /api/leave-requests/{id}/approve
+    [HttpPost("{id}/approve")]
+    public IActionResult Approve(int id)
+    {
+        using var transaction = _db.Database.BeginTransaction();
+
+        var request = _db.LeaveRequests.FirstOrDefault(r => r.Id == id);
+        if (request == null)
+            return NotFound("Leave request not found");
+
+        if (request.Status != LeaveStatus.Pending)
+            return Conflict($"Leave request is already {request.Status}");
+
+        // On PostgreSQL, lock the employee row so two concurrent approvals for the
+        // same employee can't both read a stale "used" sum and both pass the quota
+        // check. SQLite has no row-level locking (and no FOR UPDATE support); it
+        // takes a whole-database write lock per transaction instead, which happens
+        // to serialize this too, but only because of its single-writer model, not
+        // because we asked for a row lock. See DECISIONS.md for more.
+        var employee = _db.Database.IsNpgsql()
+            ? _db.Employees.FromSqlInterpolated($"SELECT * FROM \"Employees\" WHERE \"Id\" = {request.EmployeeId} FOR UPDATE").FirstOrDefault()
+            : _db.Employees.FirstOrDefault(e => e.Id == request.EmployeeId);
+
+        if (employee == null)
+            return NotFound("Employee not found");
+
+        if (request.Type == LeaveType.Vacation)
+        {
+            var used = _db.LeaveRequests
+                .Where(r => r.EmployeeId == request.EmployeeId
+                            && r.Id != request.Id
+                            && r.Type == LeaveType.Vacation
+                            && r.Status == LeaveStatus.Approved)
+                .Sum(r => r.Days);
+
+            if (used + request.Days > employee.AnnualQuota)
+            {
+                transaction.Rollback();
+                return Conflict("Approving this request would exceed the employee's annual vacation quota");
+            }
+        }
+
+        request.Status = LeaveStatus.Approved;
+        _db.SaveChanges();
+        transaction.Commit();
+
+        return Ok(request);
+    }
 }
